@@ -1,60 +1,89 @@
-// основной модуль
-import gulp from "gulp";
-// импорт путей
-import {path} from "./gulp/config/path.js"
+const { src, dest, watch, parallel, series } = require('gulp');
 
-// импорт общих плагинов
-import {plugins} from "./gulp/config/plugins.js"
+const scss         =  require('gulp-sass')(require('sass'));
+const concat       =  require('gulp-concat');
+const browserSync  =  require('browser-sync').create();
+const uglify       =  require('gulp-uglify-es').default;
+const autoprefixer =  require('gulp-autoprefixer');
+const imagemin     =  require('gulp-imagemin');
+const del          =  require('del');
 
-// передаем значения в глобальную переменную
-global.app = {
-    isBuild: process.argv.includes('--build'),
-    isDev: !process.argv.includes('--build'),
-    path: path,
-    gulp: gulp,
-    plugins: plugins,
+function browsersync () {
+    browserSync.init({
+        server: {
+            baseDir: 'app/'
+        }
+    });
 }
 
-// импорт задачи
-import {copy} from "./gulp/tasks/copy.js";
-import {reset} from "./gulp/tasks/reset.js";
-import {html} from "./gulp/tasks/html.js";
-import {server} from "./gulp/tasks/server.js";
-import {scss} from "./gulp/tasks/scss.js";
-import {js} from "./gulp/tasks/js.js";
-import {images} from "./gulp/tasks/images.js";
-import {otfToTtf, ttfToWoff, fontsStyle} from "./gulp/tasks/fonts.js";
-import {svgSprive} from "./gulp/tasks/svgSpive.js";
-import {zip} from "./gulp/tasks/zip.js";
-import {ftp} from "./gulp/tasks/ftp.js";
-
-// наблюдатель за изменением в файлах
-function watcher () {
-    gulp.watch(path.watch.files, gulp.series(files, ftp));
-    gulp.watch(path.watch.html, gulp.series(html, ftp));
-    gulp.watch(path.watch.scss, gulp.series(scss, ftp));
-    gulp.watch(path.watch.js, gulp.series(js, ftp));
-    gulp.watch(path.watch.images, gulp.series(images, ftp));
+function cleanDist () {
+    return del('dist')
 }
 
-export {svgSprive}
+function images () {
+    return src('app/images/**/*')
+    .pipe(imagemin(
+        [
+            imagemin.gifsicle({interlaced: true}),
+            imagemin.mozjpeg({quality: 75, progressive: true}),
+            imagemin.optipng({optimizationLevel: 5}),
+            imagemin.svgo({
+                plugins: [
+                    {removeViewBox: true},
+                    {cleanupIDs: false}
+                ]
+	        })
+        ]
+    ))
+    .pipe(dest('dist/images'))
+}
 
-//Последовательная обработка шрифтов
-const fonts = gulp.series(otfToTtf, ttfToWoff, fontsStyle)
+function scripts () {
+    return src([
+        'node_modules/jquery/dist/jquery.js',
+        'app/js/main.js'
+    ])
+    .pipe(concat('main.min.js'))
+    .pipe(uglify())
+    .pipe(dest('app/js'))
+    .pipe(browserSync.stream())
+}
 
-const mainTasks =gulp.series(fonts, gulp.parallel(copy, html, scss, js, images)) ;
+function styles () {
+    return src('app/scss/style.scss')
+        .pipe(scss({outputStyle: 'compressed'}))
+        .pipe(concat('style.min.css'))
+        .pipe(autoprefixer({
+            overrideBrowserslist: ['last 10 version'],
+            grid: true
+        }))
+        .pipe(dest('app/css'))
+        .pipe(browserSync.stream())
+}
 
-// настройки сценариве выполнения задач
-const dev = gulp.series(reset, mainTasks, gulp.parallel(watcher, server));
-const build = gulp.series(reset, mainTasks);
-const deployZIP = gulp.series(reset, mainTasks, zip);
-const deployFTP = gulp.series(reset, mainTasks, ftp);
+function build (){
+    return src([
+        'app/scss/style.min.css',
+        'app/fonts/**/*',
+        'app/js/main.min.js',
+        'app/*.html'
+    ],  {base: 'app'})
+    .pipe(dest('dist'))
+}
 
-//Экспорт сценариев
-export { dev }
-export { build }
-export { deployZIP }
-export { deployFTP }
+function watching () {
+    watch(['app/scss/**/*.scss'], styles);
+    watch(['app/js/**/*.js', '!app/js/main.min.js'], scripts);
+    watch(['app/*.html']).on('change', browserSync.reload)
+}
 
-// выполнение сценария по умолчанию
-gulp.task('default', dev);
+exports.styles      =  styles;
+exports.watching    =  watching;
+exports.browsersync =  browsersync;
+exports.scripts     =  scripts;
+exports.images      =  images;
+exports.cleanDist   =  cleanDist;
+
+exports.build    =  series(cleanDist, images, build)
+exports.default  =  parallel(styles, scripts, browsersync, watching);
+
